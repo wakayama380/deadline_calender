@@ -1,4 +1,4 @@
-﻿# deadline_calender
+# deadline_calender
 
 ## 手元に最新変更を反映する
 
