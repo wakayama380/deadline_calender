@@ -1,7 +1,15 @@
 import { FormEvent, useEffect, useState } from "react";
 import { taskSchema, TaskFormValues } from "../schema";
 import { ReminderPolicyInput, TaskInput, TaskWithPolicy } from "../../../shared/types/task";
-import { fromDateTimeLocalInput, toDateTimeLocalInput } from "../../../shared/utils/date";
+import {
+  fromDateTimeLocalInput,
+  joinLocalDateTime,
+  normalizeLocalDateInput,
+  normalizeLocalTimeInput,
+  splitLocalDateTime,
+  toDateTimeLocalInput
+} from "../../../shared/utils/date";
+import { getErrorMessage } from "../../../shared/utils/error";
 
 interface TaskFormProps {
   initialValue?: TaskWithPolicy | null;
@@ -50,20 +58,56 @@ export function TaskForm({ initialValue, submitLabel, onSubmit }: TaskFormProps)
   const [form, setForm] = useState<TaskFormValues>(createDefaultValues);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dueDateInput, setDueDateInput] = useState("");
+  const [dueTimeInput, setDueTimeInput] = useState("09:00");
 
   useEffect(() => {
     if (initialValue) {
-      setForm(fromTask(initialValue));
+      const next = fromTask(initialValue);
+      const split = splitLocalDateTime(next.dueAt);
+      setForm(next);
+      setDueDateInput(split.date);
+      setDueTimeInput(split.time);
       return;
     }
 
-    setForm(createDefaultValues());
+    const next = createDefaultValues();
+    const split = splitLocalDateTime(next.dueAt);
+    setForm(next);
+    setDueDateInput(split.date);
+    setDueTimeInput(split.time);
   }, [initialValue]);
+
+  function updateDueAt(partial: { date?: string; time?: string }) {
+    const nextDate = partial.date ?? dueDateInput;
+    const nextTime = partial.time ?? dueTimeInput;
+
+    setDueDateInput(nextDate);
+    setDueTimeInput(nextTime);
+
+    setForm((prev) => ({
+      ...prev,
+      // Keep raw typing progress so users can clear and retype.
+      dueAt: nextDate.length ? `${nextDate}T${nextTime}` : ""
+    }));
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const parsed = taskSchema.safeParse(form);
+    const normalizedDate = normalizeLocalDateInput(dueDateInput);
+    if (!normalizedDate) {
+      setError("Due Date format is invalid. Use YYYY-MM-DD.");
+      return;
+    }
+
+    const normalizedTime = normalizeLocalTimeInput(dueTimeInput) ?? "09:00";
+
+    const parsed = taskSchema.safeParse({
+      ...form,
+      dueAt: joinLocalDateTime(normalizedDate, normalizedTime)
+    });
+
     if (!parsed.success) {
       const message = parsed.error.issues[0]?.message ?? "Validation failed.";
       setError(message);
@@ -94,8 +138,7 @@ export function TaskForm({ initialValue, submitLabel, onSubmit }: TaskFormProps)
         }
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Save failed.";
-      setError(message);
+      setError(getErrorMessage(err, "Save failed."));
     } finally {
       setSaving(false);
     }
@@ -125,15 +168,31 @@ export function TaskForm({ initialValue, submitLabel, onSubmit }: TaskFormProps)
         />
       </label>
 
-      <label>
-        Due At
-        <input
-          type="datetime-local"
-          value={form.dueAt}
-          onChange={(event) => setForm((prev) => ({ ...prev, dueAt: event.target.value }))}
-          required
-        />
-      </label>
+      <div className="grid-two">
+        <label>
+          Due Date
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="YYYY-MM-DD"
+            value={dueDateInput}
+            onChange={(event) => updateDueAt({ date: event.target.value })}
+            required
+          />
+        </label>
+
+        <label>
+          Due Time
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="HH:mm"
+            value={dueTimeInput}
+            onChange={(event) => updateDueAt({ time: event.target.value })}
+            required
+          />
+        </label>
+      </div>
 
       <div className="grid-two">
         <label>
@@ -250,4 +309,3 @@ export function TaskForm({ initialValue, submitLabel, onSubmit }: TaskFormProps)
     </form>
   );
 }
-

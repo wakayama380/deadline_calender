@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { getDashboardSummary, listTasks } from "../features/tasks/service";
 import { DashboardSummary, TaskWithPolicy } from "../shared/types/task";
 import { formatDateTime, isInNextDays, isOverdue, isToday } from "../shared/utils/date";
+import { getErrorMessage } from "../shared/utils/error";
 
 const defaultSummary: DashboardSummary = {
   dueToday: 0,
@@ -20,13 +21,13 @@ export function DashboardPage() {
   async function refresh() {
     setLoading(true);
     try {
-      const [summaryValue, taskRows] = await Promise.all([getDashboardSummary(), listTasks()]);
+      const taskRows = await listTasks();
+      const summaryValue = await getDashboardSummary();
       setSummary(summaryValue);
       setTasks(taskRows);
       setError(null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load dashboard.";
-      setError(message);
+      setError(getErrorMessage(err, "Failed to load dashboard."));
     } finally {
       setLoading(false);
     }

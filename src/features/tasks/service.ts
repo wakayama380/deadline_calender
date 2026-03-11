@@ -10,7 +10,7 @@ import {
   TaskWithPolicy
 } from "../../shared/types/task";
 import { dbExecute, dbSelect, initDatabase } from "../../shared/db/sqlite";
-import { nowIso } from "../../shared/utils/date";
+import { isInNextDays, isOverdue, isToday, nowIso } from "../../shared/utils/date";
 import { createEventRows } from "../reminders/calc";
 
 interface TaskRow {
@@ -44,6 +44,10 @@ interface ReminderEventRow {
   message: string;
   created_at: string;
   updated_at: string;
+}
+
+interface PendingReminderRow {
+  scheduled_at: string;
 }
 
 const defaultPolicy: ReminderPolicyInput = {
@@ -111,6 +115,39 @@ function toPolicyInput(policy: ReminderPolicy): ReminderPolicyInput {
 
 async function savePolicy(taskId: number, policy: ReminderPolicyInput): Promise<void> {
   const timestamp = nowIso();
+
+  const existing = await dbSelect<{ id: number }>(
+    `SELECT id FROM reminder_policies WHERE task_id = ? LIMIT 1`,
+    [taskId]
+  );
+
+  if (existing[0]) {
+    await dbExecute(
+      `UPDATE reminder_policies
+        SET enabled = ?,
+            start_days_before = ?,
+            remind_count = ?,
+            remind_time = ?,
+            include_due_day = ?,
+            custom_mode = ?,
+            custom_offsets_json = ?,
+            updated_at = ?
+      WHERE task_id = ?`,
+      [
+        policy.enabled ? 1 : 0,
+        policy.startDaysBefore,
+        policy.remindCount,
+        policy.remindTime,
+        policy.includeDueDay ? 1 : 0,
+        policy.customMode ? 1 : 0,
+        policy.customOffsetsJson,
+        timestamp,
+        taskId
+      ]
+    );
+    return;
+  }
+
   await dbExecute(
     `INSERT INTO reminder_policies (
       task_id,
@@ -123,16 +160,7 @@ async function savePolicy(taskId: number, policy: ReminderPolicyInput): Promise<
       custom_offsets_json,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(task_id) DO UPDATE SET
-      enabled = excluded.enabled,
-      start_days_before = excluded.start_days_before,
-      remind_count = excluded.remind_count,
-      remind_time = excluded.remind_time,
-      include_due_day = excluded.include_due_day,
-      custom_mode = excluded.custom_mode,
-      custom_offsets_json = excluded.custom_offsets_json,
-      updated_at = excluded.updated_at`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       taskId,
       policy.enabled ? 1 : 0,
@@ -247,7 +275,7 @@ export async function createTask(task: TaskInput, policy: ReminderPolicyInput): 
   await ensureReady();
   const timestamp = nowIso();
 
-  await dbExecute(
+  const insertResult = await dbExecute(
     `INSERT INTO tasks (
       title,
       description,
@@ -260,10 +288,14 @@ export async function createTask(task: TaskInput, policy: ReminderPolicyInput): 
     [task.title, task.description, task.dueAt, task.priority, task.status, timestamp, timestamp]
   );
 
-  const idRow = await dbSelect<{ id: number }>("SELECT last_insert_rowid() AS id");
-  const taskId = idRow[0]?.id;
+  let taskId = insertResult.lastInsertId;
   if (!taskId) {
-    throw new Error("Failed to create task.");
+    const idRow = await dbSelect<{ id: number }>("SELECT last_insert_rowid() AS id");
+    taskId = idRow[0]?.id ?? null;
+  }
+
+  if (!taskId) {
+    throw new Error("Failed to create task. Please try again.");
   }
 
   await savePolicy(taskId, policy);
@@ -353,42 +385,22 @@ export async function listTaskEvents(taskId: number): Promise<ReminderEvent[]> {
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   await ensureReady();
 
-  const dueToday = await dbSelect<{ count: number }>(
-    `SELECT COUNT(*) AS count
-     FROM tasks
-     WHERE status != 'done'
-       AND date(due_at, 'localtime') = date('now', 'localtime')`
-  );
+  const tasks = await listTasks();
+  const openTasks = tasks.filter((task) => task.status !== "done");
 
-  const dueThisWeek = await dbSelect<{ count: number }>(
-    `SELECT COUNT(*) AS count
-     FROM tasks
-     WHERE status != 'done'
-       AND julianday(due_at) >= julianday('now')
-       AND julianday(due_at) < julianday('now', '+7 days')`
-  );
-
-  const overdue = await dbSelect<{ count: number }>(
-    `SELECT COUNT(*) AS count
-     FROM tasks
-     WHERE status != 'done'
-       AND julianday(due_at) < julianday('now')`
-  );
-
-  const remindersToday = await dbSelect<{ count: number }>(
-    `SELECT COUNT(*) AS count
+  const pendingRows = await dbSelect<PendingReminderRow>(
+    `SELECT re.scheduled_at
      FROM reminder_events re
      INNER JOIN tasks t ON t.id = re.task_id
      WHERE re.status = 'pending'
-       AND t.status != 'done'
-       AND date(re.scheduled_at, 'localtime') = date('now', 'localtime')`
+       AND t.status != 'done'`
   );
 
   return {
-    dueToday: dueToday[0]?.count ?? 0,
-    dueThisWeek: dueThisWeek[0]?.count ?? 0,
-    overdue: overdue[0]?.count ?? 0,
-    remindersToday: remindersToday[0]?.count ?? 0
+    dueToday: openTasks.filter((task) => isToday(task.dueAt)).length,
+    dueThisWeek: openTasks.filter((task) => isInNextDays(task.dueAt, 7)).length,
+    overdue: openTasks.filter((task) => isOverdue(task.dueAt)).length,
+    remindersToday: pendingRows.filter((row) => isToday(row.scheduled_at)).length
   };
 }
 
@@ -538,4 +550,3 @@ export async function markReminderSent(eventId: number): Promise<void> {
     [nowIso(), nowIso(), eventId]
   );
 }
-

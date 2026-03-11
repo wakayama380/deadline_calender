@@ -45,6 +45,16 @@ const schemaStatements = [
 
 let instance: Database | null = null;
 let initPromise: Promise<void> | null = null;
+let queue: Promise<unknown> = Promise.resolve();
+
+function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+  const next = queue.then(operation, operation);
+  queue = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
 
 async function requireDb(): Promise<Database> {
   if (!isTauri()) {
@@ -60,24 +70,58 @@ async function requireDb(): Promise<Database> {
 
 export async function initDatabase(): Promise<void> {
   if (!initPromise) {
-    initPromise = (async () => {
+    initPromise = enqueue(async () => {
       const db = await requireDb();
       for (const statement of schemaStatements) {
         await db.execute(statement);
       }
-    })();
+    });
   }
 
   await initPromise;
 }
 
-export async function dbExecute(query: string, values: unknown[] = []): Promise<void> {
-  const db = await requireDb();
-  await db.execute(query, values);
+export interface ExecuteResult {
+  rowsAffected: number;
+  lastInsertId: number | null;
+}
+
+export async function dbExecute(query: string, values: unknown[] = []): Promise<ExecuteResult> {
+  return enqueue(async () => {
+    const db = await requireDb();
+    const result = await db.execute(query, values);
+
+    const rowsAffected = typeof result?.rowsAffected === "number" ? result.rowsAffected : 0;
+    const rawLastInsertId = result?.lastInsertId;
+
+    let lastInsertId: number | null = null;
+    if (typeof rawLastInsertId === "number") {
+      lastInsertId = rawLastInsertId;
+    } else if (typeof rawLastInsertId === "string") {
+      const parsed = Number.parseInt(rawLastInsertId, 10);
+      lastInsertId = Number.isNaN(parsed) ? null : parsed;
+    }
+
+    return {
+      rowsAffected,
+      lastInsertId
+    };
+  });
 }
 
 export async function dbSelect<T>(query: string, values: unknown[] = []): Promise<T[]> {
-  const db = await requireDb();
-  const rows = await db.select<T>(query, values);
-  return rows as T[];
+  return enqueue(async () => {
+    const db = await requireDb();
+    const rows = await db.select<T>(query, values);
+
+    if (Array.isArray(rows)) {
+      return rows as T[];
+    }
+
+    if (rows == null) {
+      return [];
+    }
+
+    return [rows as T];
+  });
 }

@@ -1,10 +1,26 @@
+function pad(value: number): string {
+  return `${value}`.padStart(2, "0");
+}
+
+function toHalfWidth(value: string): string {
+  return value
+    .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/[：]/g, ":")
+    .replace(/[／]/g, "/")
+    .replace(/[．。]/g, ".")
+    .replace(/[－ー―‐−]/g, "-");
+}
+
 export function nowIso(): string {
   return new Date().toISOString();
 }
 
 export function toDateTimeLocalInput(iso: string): string {
   const date = new Date(iso);
-  const pad = (value: number) => `${value}`.padStart(2, "0");
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
   const yyyy = date.getFullYear();
   const mm = pad(date.getMonth() + 1);
   const dd = pad(date.getDate());
@@ -13,8 +29,91 @@ export function toDateTimeLocalInput(iso: string): string {
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 }
 
+export function splitLocalDateTime(value: string): { date: string; time: string } {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  if (match) {
+    return { date: match[1], time: match[2] };
+  }
+
+  return {
+    date: "",
+    time: "09:00"
+  };
+}
+
+export function normalizeLocalDateInput(value: string): string | null {
+  const text = toHalfWidth(value).trim().replace(/[/.]/g, "-");
+  const match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+export function normalizeLocalTimeInput(value: string): string | null {
+  const text = toHalfWidth(value).trim();
+  const match = text.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const hour = Number.parseInt(match[1], 10);
+  const minute = Number.parseInt(match[2], 10);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  return `${pad(hour)}:${pad(minute)}`;
+}
+
+export function joinLocalDateTime(dateValue: string, timeValue: string): string {
+  const normalizedDate = normalizeLocalDateInput(dateValue);
+  if (!normalizedDate) {
+    return "";
+  }
+
+  const normalizedTime = normalizeLocalTimeInput(timeValue) ?? "09:00";
+  return `${normalizedDate}T${normalizedTime}`;
+}
+
 export function fromDateTimeLocalInput(value: string): string {
-  return new Date(value).toISOString();
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) {
+    throw new Error("Due At format is invalid.");
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  const hour = Number.parseInt(match[4], 10);
+  const minute = Number.parseInt(match[5], 10);
+  const second = Number.parseInt(match[6] ?? "0", 10);
+
+  const date = new Date(year, month - 1, day, hour, minute, second, 0);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Due At value is invalid.");
+  }
+
+  return date.toISOString();
 }
 
 export function formatDateTime(iso: string): string {

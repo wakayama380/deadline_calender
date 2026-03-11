@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTasks } from "../features/tasks/hooks/useTasks";
+import { deleteTask } from "../features/tasks/service";
 import { TaskWithPolicy } from "../shared/types/task";
 import { formatDateTime, isOverdue } from "../shared/utils/date";
+import { getErrorMessage } from "../shared/utils/error";
 
 type FilterMode = "all" | "open" | "done" | "overdue";
 type SortMode = "due" | "priority" | "created";
@@ -45,8 +47,29 @@ export function TaskListPage() {
   const { tasks, loading, error, refresh } = useTasks();
   const [filter, setFilter] = useState<FilterMode>("all");
   const [sort, setSort] = useState<SortMode>("due");
+  const [deletingTaskId, setDeletingTaskId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const visible = applySort(applyFilter(tasks, filter), sort);
+
+  async function handleDelete(task: TaskWithPolicy) {
+    const confirmed = window.confirm(`Delete task "${task.title}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingTaskId(task.id);
+    setDeleteError(null);
+
+    try {
+      await deleteTask(task.id);
+      await refresh();
+    } catch (err) {
+      setDeleteError(getErrorMessage(err, "Failed to delete task."));
+    } finally {
+      setDeletingTaskId(null);
+    }
+  }
 
   return (
     <section>
@@ -63,6 +86,7 @@ export function TaskListPage() {
       </div>
 
       {error ? <p className="error-text">{error}</p> : null}
+      {deleteError ? <p className="error-text">{deleteError}</p> : null}
 
       <div className="toolbar">
         <label>
@@ -95,6 +119,7 @@ export function TaskListPage() {
               <th>Due At</th>
               <th>Priority</th>
               <th>Status</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -109,6 +134,15 @@ export function TaskListPage() {
                 </td>
                 <td>
                   <span className={`badge ${task.status}`}>{task.status}</span>
+                </td>
+                <td>
+                  <button
+                    className="danger"
+                    onClick={() => void handleDelete(task)}
+                    disabled={deletingTaskId === task.id}
+                  >
+                    {deletingTaskId === task.id ? "Deleting..." : "Delete"}
+                  </button>
                 </td>
               </tr>
             ))}
