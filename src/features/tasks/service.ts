@@ -50,6 +50,10 @@ interface PendingReminderRow {
   scheduled_at: string;
 }
 
+interface ReminderCountRow {
+  count: number;
+}
+
 const defaultPolicy: ReminderPolicyInput = {
   enabled: true,
   startDaysBefore: 7,
@@ -507,6 +511,93 @@ export async function importBackup(payload: BackupPayload): Promise<void> {
     };
     await regenerateEvents(item.id, taskInput, toPolicyInput(item.policy));
   }
+}
+
+export interface ReminderQueueStatus {
+  totalPending: number;
+  duePending: number;
+  nextScheduledAt: string | null;
+}
+
+export async function getReminderQueueStatus(): Promise<ReminderQueueStatus> {
+  await ensureReady();
+
+  const [totalRows, dueRows, nextRows] = await Promise.all([
+    dbSelect<ReminderCountRow>(
+      `SELECT COUNT(*) AS count
+       FROM reminder_events re
+       INNER JOIN tasks t ON t.id = re.task_id
+       WHERE re.status = 'pending'
+         AND t.status != 'done'`
+    ),
+    dbSelect<ReminderCountRow>(
+      `SELECT COUNT(*) AS count
+       FROM reminder_events re
+       INNER JOIN tasks t ON t.id = re.task_id
+       WHERE re.status = 'pending'
+         AND julianday(re.scheduled_at) <= julianday('now')
+         AND t.status != 'done'`
+    ),
+    dbSelect<PendingReminderRow>(
+      `SELECT re.scheduled_at
+       FROM reminder_events re
+       INNER JOIN tasks t ON t.id = re.task_id
+       WHERE re.status = 'pending'
+         AND t.status != 'done'
+       ORDER BY re.scheduled_at ASC
+       LIMIT 1`
+    )
+  ]);
+
+  return {
+    totalPending: Number(totalRows[0]?.count ?? 0),
+    duePending: Number(dueRows[0]?.count ?? 0),
+    nextScheduledAt: nextRows[0]?.scheduled_at ?? null
+  };
+}
+
+export async function rebuildMissingReminderEvents(): Promise<number> {
+  await ensureReady();
+
+  const tasks = await listTasks();
+  const now = Date.now();
+  let rebuilt = 0;
+
+  for (const item of tasks) {
+    if (item.status === "done" || !item.policy.enabled) {
+      continue;
+    }
+
+    if (new Date(item.dueAt).getTime() <= now) {
+      continue;
+    }
+
+    const pendingRows = await dbSelect<ReminderCountRow>(
+      `SELECT COUNT(*) AS count
+       FROM reminder_events
+       WHERE task_id = ?
+         AND status = 'pending'`,
+      [item.id]
+    );
+
+    const pendingCount = Number(pendingRows[0]?.count ?? 0);
+    if (pendingCount > 0) {
+      continue;
+    }
+
+    const taskInput: TaskInput = {
+      title: item.title,
+      description: item.description,
+      dueAt: item.dueAt,
+      priority: item.priority,
+      status: item.status
+    };
+
+    await regenerateEvents(item.id, taskInput, toPolicyInput(item.policy));
+    rebuilt += 1;
+  }
+
+  return rebuilt;
 }
 
 export interface DueReminderEvent {

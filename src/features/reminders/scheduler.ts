@@ -1,31 +1,60 @@
-import { formatDateTime } from "../../shared/utils/date";
 import { listDueReminderEvents, markReminderSent } from "../tasks/service";
 import { sendTaskNotification } from "./notification";
+import { sendSlackMessage } from "./slack";
+import { buildReminderMessageText } from "./calc";
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let ticking = false;
 
-async function tick(): Promise<void> {
+export interface ReminderRunResult {
+  processed: number;
+  sent: number;
+  unsent: number;
+}
+
+async function runTick(): Promise<ReminderRunResult> {
   if (ticking) {
-    return;
+    return { processed: 0, sent: 0, unsent: 0 };
   }
 
   ticking = true;
   try {
     const dueEvents = await listDueReminderEvents(50);
-    for (const event of dueEvents) {
-      const sent = await sendTaskNotification(
-        `締切リマインド: ${event.title}`,
-        `${event.message}\n締切: ${formatDateTime(event.dueAt)}`
-      );
+    const result: ReminderRunResult = {
+      processed: dueEvents.length,
+      sent: 0,
+      unsent: 0
+    };
 
-      if (sent) {
+    for (const event of dueEvents) {
+      const title = `Deadline reminder: ${event.title}`;
+      const body = buildReminderMessageText(event.title, event.dueAt);
+
+      const desktopSent = await sendTaskNotification(title, body);
+
+      let slackSent = false;
+      try {
+        slackSent = await sendSlackMessage(title, body);
+      } catch (error) {
+        console.error("failed to send slack message", error);
+      }
+
+      if (desktopSent || slackSent) {
         await markReminderSent(event.eventId);
+        result.sent += 1;
+      } else {
+        result.unsent += 1;
       }
     }
+
+    return result;
   } finally {
     ticking = false;
   }
+}
+
+export async function runReminderCheckNow(): Promise<ReminderRunResult> {
+  return runTick();
 }
 
 export function startReminderScheduler(): () => void {
@@ -33,9 +62,9 @@ export function startReminderScheduler(): () => void {
     return stopReminderScheduler;
   }
 
-  void tick();
+  void runTick();
   timer = setInterval(() => {
-    void tick();
+    void runTick();
   }, 60_000);
 
   return stopReminderScheduler;

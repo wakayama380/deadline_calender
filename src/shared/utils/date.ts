@@ -1,14 +1,14 @@
-function pad(value: number): string {
+﻿function pad(value: number): string {
   return `${value}`.padStart(2, "0");
 }
 
 function toHalfWidth(value: string): string {
   return value
-    .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
-    .replace(/[：]/g, ":")
-    .replace(/[／]/g, "/")
-    .replace(/[．。]/g, ".")
-    .replace(/[－ー―‐−]/g, "-");
+    .replace(/[\uFF01-\uFF5E]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/[\uFF1A\uFE55]/g, ":")
+    .replace(/[\uFF0F]/g, "/")
+    .replace(/[\uFF0E\u3002]/g, ".")
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u30FC\uFF70\u2212]/g, "-");
 }
 
 export function nowIso(): string {

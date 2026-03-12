@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "app:run": "bash scripts/run_release.sh",
+    "app:install-launcher": "bash scripts/install_linux_launcher.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

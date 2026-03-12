@@ -1,6 +1,7 @@
 import { PropsWithChildren, useEffect, useState } from "react";
-import { initDatabase } from "../shared/db/sqlite";
 import { startReminderScheduler } from "../features/reminders/scheduler";
+import { rebuildMissingReminderEvents } from "../features/tasks/service";
+import { initDatabase } from "../shared/db/sqlite";
 
 export function AppProviders({ children }: PropsWithChildren) {
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
@@ -12,6 +13,7 @@ export function AppProviders({ children }: PropsWithChildren) {
     void (async () => {
       try {
         await initDatabase();
+        await rebuildMissingReminderEvents();
         if (!cancelled) {
           cleanup = startReminderScheduler();
         }

@@ -1,5 +1,8 @@
-import { ReminderPolicyInput, TaskInput } from "../../shared/types/task";
-import { nowIso } from "../../shared/utils/date";
+﻿import { ReminderPolicyInput, TaskInput } from "../../shared/types/task";
+import { nowIso, formatDateTime } from "../../shared/utils/date";
+
+const REMINDER_PHRASE_START = "\u306e\u7DE0\u5207\u306F";
+const REMINDER_PHRASE_END = "\u3067\u3059\u3002";
 
 function normalizeOffsets(values: number[]): number[] {
   return Array.from(new Set(values.map((value) => Math.max(0, Math.round(value))))).sort((a, b) => b - a);
@@ -51,6 +54,13 @@ function applyReminderTime(base: Date, remindTime: string): Date {
   return value;
 }
 
+function ceilToNextMinute(date: Date): Date {
+  const next = new Date(date);
+  next.setSeconds(0, 0);
+  next.setMinutes(next.getMinutes() + 1);
+  return next;
+}
+
 export function buildReminderSchedule(dueAt: string, policy: ReminderPolicyInput, now = new Date()): string[] {
   const dueDate = new Date(dueAt);
   if (Number.isNaN(dueDate.getTime()) || !policy.enabled) {
@@ -65,16 +75,26 @@ export function buildReminderSchedule(dueAt: string, policy: ReminderPolicyInput
   });
 
   const unique = Array.from(new Set(schedules.map((date) => date.toISOString()))).sort();
-  return unique.filter((iso) => new Date(iso).getTime() > now.getTime());
+  const future = unique.filter((iso) => new Date(iso).getTime() > now.getTime());
+
+  if (future.length > 0) {
+    return future;
+  }
+
+  if (dueDate.getTime() > now.getTime()) {
+    return [ceilToNextMinute(now).toISOString()];
+  }
+
+  return [];
+}
+
+export function buildReminderMessageText(title: string, dueAt: string): string {
+  const dueText = formatDateTime(dueAt);
+  return `${title} ${REMINDER_PHRASE_START} ${dueText} ${REMINDER_PHRASE_END}`;
 }
 
 export function buildReminderMessage(task: TaskInput): string {
-  const dueText = new Intl.DateTimeFormat("ja-JP", {
-    dateStyle: "medium",
-    timeStyle: "short"
-  }).format(new Date(task.dueAt));
-
-  return `${task.title} の締切は ${dueText} です。`;
+  return buildReminderMessageText(task.title, task.dueAt);
 }
 
 export function createEventRows(taskId: number, task: TaskInput, policy: ReminderPolicyInput) {
